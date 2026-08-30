@@ -22,7 +22,7 @@ jobs:
     steps:
       # 1) 检出你的 fork 仓库（含你要提交进去的 custom/ 和本 workflow）
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 2) 腾磁盘 + 加 swap：lede 全量编译吃空间和内存，GitHub runner 默认较紧
       - name: Free disk space & add swap
@@ -35,12 +35,12 @@ jobs:
           df -h /
           free -h
 
-      # 3) 安装构建依赖（注意：新版 Ubuntu 用 libncurses-dev，不再有 libncurses5-dev）
+      # 3) 安装构建依赖（新版 Ubuntu 24.04 没有 libncurses5-dev / python3-distutils，故用现名）
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get -y install build-essential asciidoc binutils bzip2 gawk gettext \
-            git libncurses-dev libz-dev patch python3 python3-distutils unzip \
+            git libncurses-dev libz-dev patch python3 unzip \
             zlib1g-dev libssl-dev flex bison
 
       # 4) 更新并安装 feeds（coolsnowwolf 的插件源，这一步最耗时/最占网速）
