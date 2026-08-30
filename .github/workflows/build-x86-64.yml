@@ -1,0 +1,107 @@
+# =============================================================================
+# lede (coolsnowwolf) x86-64 UEFI 固件云端编译
+# 触发方式：push 到 master/main，或手动点 "Run workflow"
+# 产物：bin/targets/x86/64/*.img.gz  （其中 *-combined-efi.img.gz 为 UEFI 镜像）
+# =============================================================================
+name: Build lede x86-64 (UEFI)
+
+on:
+  push:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+# 同一分支只保留最新一次构建，避免并发挤占资源
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-x86-64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      # 1) 检出你的 fork 仓库（含你要提交进去的 custom/ 和本 workflow）
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2) 腾磁盘 + 加 swap：lede 全量编译吃空间和内存，GitHub runner 默认较紧
+      - name: Free disk space & add swap
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /usr/lib/mono /opt/ghc /opt/hostedtoolcache || true
+          sudo swapoff -a || true
+          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && \
+            sudo mkswap /swapfile && sudo swapon /swapfile || true
+          df -h /
+          free -h
+
+      # 3) 安装构建依赖（注意：新版 Ubuntu 用 libncurses-dev，不再有 libncurses5-dev）
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get -y install build-essential asciidoc binutils bzip2 gawk gettext \
+            git libncurses-dev libz-dev patch python3 python3-distutils unzip \
+            zlib1g-dev libssl-dev flex bison
+
+      # 4) 更新并安装 feeds（coolsnowwolf 的插件源，这一步最耗时/最占网速）
+      - name: Update & install feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      # 5) 用种子配置生成完整 .config（x86-64 + squashfs + LuCI）
+      - name: Prepare .config
+        run: |
+          cp custom/x86-64-uefi.config .config
+          make defconfig
+
+      # 6) 把默认配置修改脚本放进 base-files 的 uci-defaults，
+      #    这样烧录后「第一次开机即生效」：eth0=LAN，IP 192.168.5.1/24
+      - name: Bake default LAN config (eth0=LAN, 192.168.5.1/24)
+        run: |
+          mkdir -p package/base-files/files/etc/uci-defaults
+          cp custom/lan-default.sh package/base-files/files/etc/uci-defaults/99-lan-default.sh
+          chmod +x package/base-files/files/etc/uci-defaults/99-lan-default.sh
+          echo "--- copied uci-defaults ---"
+          ls -l package/base-files/files/etc/uci-defaults/
+
+      # 7) 把默认 root 密码设为 root/password（在 runner 上用 openssl 计算哈希，编进首启脚本）
+      - name: Bake default root password (root/password)
+        run: |
+          PASSHASH=$(openssl passwd -1 -salt dshsalt 'password')
+          echo "PASSHASH=$PASSHASH"
+          mkdir -p package/base-files/files/etc/uci-defaults
+          cat > package/base-files/files/etc/uci-defaults/99-set-root-password.sh <<EOF
+          #!/bin/sh
+          # 首次开机把 root 密码设为 'password'
+          sed -i "s|^root:[^:]*:|root:${PASSHASH}:|" /etc/shadow
+          exit 0
+          EOF
+          chmod +x package/base-files/files/etc/uci-defaults/99-set-root-password.sh
+          echo "--- root password uci-defaults ---"
+          cat package/base-files/files/etc/uci-defaults/99-set-root-password.sh
+
+      # 8) 编译（V=s 打印详细日志，tee 存到 build.log 方便排错）
+      - name: Build image
+        run: |
+          set -o pipefail
+          make -j$(nproc) V=s 2>&1 | tee build.log
+
+      # 9) 列出产物
+      - name: List artifacts
+        run: |
+          echo "=== find bin/targets ==="
+          find bin/targets -type f | sort
+          echo "=== build.log tail ==="
+          tail -n 40 build.log || true
+
+      # 10) 上传固件产物（*.img.gz 为 UEFI/整盘镜像）
+      - name: Upload image
+        uses: actions/upload-artifact@v4
+        with:
+          name: lede-x86-64-uefi-images
+          path: |
+            bin/targets/x86/64/*.img.gz
+            bin/targets/x86/64/*.img
+            build.log
+          if-no-files-found: error
