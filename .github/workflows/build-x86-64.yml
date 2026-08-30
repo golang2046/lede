@@ -55,12 +55,12 @@ jobs:
           cp custom/x86-64-uefi.config .config
           make defconfig
 
-      # 5b) 强制解决 libustream 冲突：只保留 openssl 版、关掉 mbedtls 版，
-      #     否则两个都会装 libustream.so -> file clash -> package/install 报错
-      - name: Fix libustream-ssl conflict (openssl only)
+      # 5b) 强制解决 libustream 冲突：只保留 mbedtls 版、关掉 openssl 版。
+      #     因为 luci-ssl 依赖 libustream-mbedtls，且两者并存会造成 file clash
+      - name: Fix libustream-ssl conflict (mbedtls only)
         run: |
-          sed -i "s|^CONFIG_PACKAGE_libustream-mbedtls=y|# CONFIG_PACKAGE_libustream-mbedtls is not set|" .config 2>/dev/null || true
-          sed -i "s|^# CONFIG_PACKAGE_libustream-openssl is not set|CONFIG_PACKAGE_libustream-openssl=y|" .config 2>/dev/null || true
+          sed -i "s|^CONFIG_PACKAGE_libustream-openssl=y|# CONFIG_PACKAGE_libustream-openssl is not set|" .config 2>/dev/null || true
+          sed -i "s|^# CONFIG_PACKAGE_libustream-mbedtls is not set|CONFIG_PACKAGE_libustream-mbedtls=y|" .config 2>/dev/null || true
           echo "--- libustream settings ---"
           grep -E "libustream" .config || true
 
