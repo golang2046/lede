@@ -55,6 +55,15 @@ jobs:
           cp custom/x86-64-uefi.config .config
           make defconfig
 
+      # 5b) 强制解决 libustream 冲突：只保留 openssl 版、关掉 mbedtls 版，
+      #     否则两个都会装 libustream.so -> file clash -> package/install 报错
+      - name: Fix libustream-ssl conflict (openssl only)
+        run: |
+          sed -i "s|^CONFIG_PACKAGE_libustream-mbedtls=y|# CONFIG_PACKAGE_libustream-mbedtls is not set|" .config 2>/dev/null || true
+          sed -i "s|^# CONFIG_PACKAGE_libustream-openssl is not set|CONFIG_PACKAGE_libustream-openssl=y|" .config 2>/dev/null || true
+          echo "--- libustream settings ---"
+          grep -E "libustream" .config || true
+
       # 6) 把默认配置修改脚本放进 base-files 的 uci-defaults，
       #    这样烧录后「第一次开机即生效」：eth0=LAN，IP 192.168.5.1/24
       - name: Bake default LAN config (eth0=LAN, 192.168.5.1/24)
@@ -95,8 +104,9 @@ jobs:
           echo "=== build.log tail ==="
           tail -n 40 build.log || true
 
-      # 10) 上传固件产物（*.img.gz 为 UEFI/整盘镜像）
+      # 10) 上传固件产物（*.img.gz 为 UEFI/整盘镜像）。即便编译失败也上传，以便拿 build.log 排错
       - name: Upload image
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: lede-x86-64-uefi-images
@@ -104,4 +114,4 @@ jobs:
             bin/targets/x86/64/*.img.gz
             bin/targets/x86/64/*.img
             build.log
-          if-no-files-found: error
+          if-no-files-found: warn
