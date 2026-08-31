@@ -65,6 +65,10 @@ jobs:
       # 4) 更新并安装 feeds（coolsnowwolf 的插件源，这一步最耗时/最占网速）
       - name: Update & install feeds
         run: |
+          # 下载超时/重试 + git 低速超时，避免网络挂起导致无限等待
+          export WGET_OPTIONS="--timeout=30 --tries=3"
+          export GIT_HTTP_LOW_SPEED_LIMIT=1
+          export GIT_HTTP_LOW_SPEED_TIME=60
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
@@ -112,6 +116,8 @@ jobs:
       # 8) 编译（V=s 打印详细日志，tee 存到 build.log 方便排错）
       - name: Build image
         run: |
+          # 下载超时/重试，避免某个源码包下载挂起导致无限等待
+          export WGET_OPTIONS="--timeout=30 --tries=3"
           set -o pipefail
           make -j$(nproc) V=s 2>&1 | tee build.log
 
