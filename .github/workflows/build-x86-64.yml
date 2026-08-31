@@ -9,6 +9,10 @@ on:
   push:
     branches: [ master, main ]
   workflow_dispatch:
+  # 北京时间每周五晚 24:00（= 周六凌晨 0 点）自动编译一次
+  # 北京 = UTC+8，所以对应 UTC 每周五 16:00
+  schedule:
+    - cron: '0 16 * * 5'
 
 # 同一分支只保留最新一次构建，避免并发挤占资源
 concurrency:
@@ -18,11 +22,26 @@ concurrency:
 jobs:
   build-x86-64:
     runs-on: ubuntu-latest
+    # 需要写权限，才能创建/管理 GitHub Releases
+    permissions:
+      contents: write
     timeout-minutes: 360
     steps:
       # 1) 检出你的 fork 仓库（含你要提交进去的 custom/ 和本 workflow）
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # 1b) 自动同步上游 coolsnowwolf/lede：把最新代码合并进来，再编译。
+      #     只合并、不推送，保留你自己的 .github/ custom/ 文件，也避免重复触发。
+      - name: Sync fork to upstream (coolsnowwolf/lede)
+        run: |
+          git config user.email "github-actions@github.com"
+          git config user.name "github-actions"
+          git fetch --depth 1 https://github.com/coolsnowwolf/lede.git master
+          git merge --ff-only FETCH_HEAD 2>/dev/null || git merge FETCH_HEAD || true
+          echo "=== HEAD after sync: $(git rev-parse --short HEAD) ==="
 
       # 2) 腾磁盘 + 加 swap：lede 全量编译吃空间和内存，GitHub runner 默认较紧
       - name: Free disk space & add swap
@@ -107,7 +126,7 @@ jobs:
       # 10) 上传固件产物（*.img.gz 为 UEFI/整盘镜像）。即便编译失败也上传，以便拿 build.log 排错
       - name: Upload image
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: lede-x86-64-uefi-images
           path: |
@@ -115,3 +134,37 @@ jobs:
             bin/targets/x86/64/*.img
             build.log
           if-no-files-found: warn
+          # 只在 60 天内保留产物，超过自动删除（≈只留最近 2 个月的固件）
+          retention-days: 60
+
+      # 11) 计算发布标签（用日期，如 auto-2026-08-01）
+      - name: Compute release date tag
+        id: date
+        run: echo "date=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      # 12) 发布到 GitHub Releases（仅在编译成功时发布，把固件挂到 Releases 页）
+      - name: Publish to GitHub Release
+        if: success()
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: auto-${{ steps.date.outputs.date }}
+          name: lede x86-64 UEFI auto-${{ steps.date.outputs.date }}
+          files: |
+            bin/targets/x86/64/*-combined-efi.img.gz
+            bin/targets/x86/64/*.img.gz
+          generate_release_notes: true
+
+      # 13) 只保留最近 3 个固件（更早的旧 Release 自动删除）
+      - name: Keep only latest 3 releases
+        if: success()
+        run: |
+          # 列出所有 auto-* 版本，按日期倒序（新的在前），保留前 3 个，删除更早的
+          gh release list --limit 100 | awk '{print $1}' | grep '^auto-' | sort -r > /tmp/autoreleases.txt
+          echo "=== auto releases (newest first) ==="
+          cat /tmp/autoreleases.txt
+          # 从第 4 行起到最后，都是要删的旧版本（前面 3 个保留）
+          tail -n +4 /tmp/autoreleases.txt | while read -r tag; do
+            echo "Deleting old release: $tag"
+            gh release delete "$tag" --yes || true
+          done
+          echo "=== done: kept latest 3 ==="
