@@ -148,7 +148,8 @@ jobs:
         id: date
         run: echo "date=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
-      # 12) 发布到 GitHub Releases（仅在编译成功时发布，把固件挂到 Releases 页）
+      # 12) 发布到 GitHub Releases（仅在编译成功时发布）。只上传 UEFI 镜像，
+      #     不传 rootfs/kernel/combined 等其余副产品，让下载页干净、只留你要的那个。
       - name: Publish to GitHub Release
         if: success()
         uses: softprops/action-gh-release@v2
@@ -157,7 +158,6 @@ jobs:
           name: lede x86-64 UEFI auto-${{ steps.date.outputs.date }}
           files: |
             bin/targets/x86/64/*-combined-efi.img.gz
-            bin/targets/x86/64/*.img.gz
           generate_release_notes: true
 
       # 13) 只保留最近 3 个固件（更早的旧 Release 自动删除）
